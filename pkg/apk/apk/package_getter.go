@@ -38,6 +38,7 @@ import (
 	"chainguard.dev/apko/pkg/apk/auth"
 	"chainguard.dev/apko/pkg/apk/expandapk"
 	"chainguard.dev/apko/pkg/apk/expandapk/tarfs"
+	"chainguard.dev/apko/pkg/apk/repro"
 	"chainguard.dev/apko/pkg/paths"
 
 	"github.com/chainguard-dev/clog"
@@ -412,6 +413,13 @@ func (d *defaultPackageGetter) cachePackage(ctx context.Context, pkg Installable
 
 	tarDst := strings.TrimSuffix(exp.PackageFile, ".gz")
 
+	// At this point the compressed .dat.tar.gz is published but the uncompressed
+	// .dat.tar is NOT yet. A concurrent cachedPackage() will see the .gz, find the
+	// .tar absent, and os.Create()+decompress it. Widening this window makes that
+	// interleaving (and the resulting short read below) far more likely.
+	repro.Logf("cachePackage: published %s; .dat.tar NOT yet published -> WINDOW OPEN", filepath.Base(datDst))
+	repro.Sleep("APKO_REPRO_PUBLISH_SLEEP_MS")
+
 	if err := paths.AdvertiseCachedFile(exp.TarFile, tarDst); err != nil {
 		return nil, err
 	}
@@ -429,8 +437,10 @@ func (d *defaultPackageGetter) cachePackage(ctx context.Context, pkg Installable
 	if err != nil {
 		return nil, err
 	}
+	repro.Logf("cachePackage: tarfs.New on %s size=%d (reading possibly-shared .dat.tar)", filepath.Base(exp.TarFile), info.Size())
 	exp.TarFS, err = tarfs.New(data, info.Size())
 	if err != nil {
+		repro.Logf("cachePackage: tarfs.New on %s size=%d FAILED: %v <<< RACE LOST", filepath.Base(exp.TarFile), info.Size(), err)
 		return nil, err
 	}
 
@@ -522,6 +532,7 @@ func (d *defaultPackageGetter) cachedPackage(ctx context.Context, pkg Installabl
 	}
 
 	exp.TarFile = strings.TrimSuffix(exp.PackageFile, ".gz")
+	repro.Logf("cachedPackage (cache-hit path): about to PackageData(%s)", filepath.Base(exp.TarFile))
 	data, err := exp.PackageData()
 	if err != nil {
 		return nil, err
@@ -530,8 +541,10 @@ func (d *defaultPackageGetter) cachedPackage(ctx context.Context, pkg Installabl
 	if err != nil {
 		return nil, err
 	}
+	repro.Logf("cachedPackage: tarfs.New on %s size=%d", filepath.Base(exp.TarFile), info.Size())
 	exp.TarFS, err = tarfs.New(data, info.Size())
 	if err != nil {
+		repro.Logf("cachedPackage: tarfs.New on %s size=%d FAILED: %v <<< RACE LOST", filepath.Base(exp.TarFile), info.Size(), err)
 		return nil, err
 	}
 

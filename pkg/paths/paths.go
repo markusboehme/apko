@@ -19,6 +19,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+
+	"chainguard.dev/apko/pkg/apk/repro"
 )
 
 func ResolvePath(p string, includePaths []string) (string, error) {
@@ -55,6 +57,8 @@ func AdvertiseCachedFile(src, dst string) error {
 		if _, err := os.Stat(dst); err == nil {
 			// Valid symlink exists - another process already advertised.
 			// Clean up src since it's unadvertised and return.
+			repro.Logf("AdvertiseCachedFile: dst=%s ALREADY EXISTS -> adopting it, removing my src=%s",
+				filepath.Base(dst), filepath.Base(src))
 			_ = os.Remove(src)
 			return nil
 		}
@@ -78,5 +82,7 @@ func AdvertiseCachedFile(src, dst string) error {
 		}
 		return fmt.Errorf("linking (cached) %s to %s: %w", rel, dst, err)
 	}
+	repro.Logf("AdvertiseCachedFile: dst=%s PUBLISHED -> symlink to my src=%s",
+		filepath.Base(dst), filepath.Base(src))
 	return nil
 }

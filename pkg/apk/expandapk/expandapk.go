@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"chainguard.dev/apko/pkg/apk/expandapk/tarfs"
+	"chainguard.dev/apko/pkg/apk/repro"
 	"chainguard.dev/apko/pkg/apk/types"
 	"chainguard.dev/apko/pkg/limitio"
 	"github.com/klauspost/compress/gzip"
@@ -186,6 +187,8 @@ func (a *APKExpanded) PackageData() (*os.File, error) {
 		return nil, fmt.Errorf("parsing %q: %w", a.PackageFile, err)
 	}
 
+	repro.Logf("PackageData: %s NOT present -> os.Create (truncate) + decompress START",
+		filepath.Base(a.TarFile))
 	uf, err = os.Create(a.TarFile)
 	if err != nil {
 		return nil, fmt.Errorf("opening tar file %q: %w", a.TarFile, err)
@@ -201,9 +204,16 @@ func (a *APKExpanded) PackageData() (*os.File, error) {
 	}
 	limitedZr := limitio.NewLimitedReaderWithDefault(zr, maxSize, DefaultMaxDataSize)
 
+	// REPRO: write only a partial prefix and then pause, leaving the canonical
+	// .dat.tar truncated mid-stream so a concurrent reader's tarfs.New sees a
+	// short tar and fails with "unexpected EOF". No-op unless the env is set.
+	repro.PartialPause(uf, limitedZr)
+
 	if _, err := io.CopyBuffer(uf, limitedZr, buf); err != nil {
 		return nil, fmt.Errorf("decompressing %q: %w", a.PackageFile, err)
 	}
+
+	repro.Logf("PackageData: %s decompress DONE", filepath.Base(a.TarFile))
 
 	if err := uf.Close(); err != nil {
 		return nil, fmt.Errorf("closing %q: %w", a.TarFile, err)
